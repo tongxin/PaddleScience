@@ -29,6 +29,7 @@ class Solver(object):
         self.algo.loss.geo.to_tensor()
         num_batch = self.algo.loss.num_batch
 
+        # print("init net.parameter: ", self.algo.net.parameters())
         for epoch_id in range(num_epoch):
             for batch_id in range(num_batch):
                 eq_loss, bc_loss, ic_loss = self.algo.batch_run(batch_id)
@@ -36,6 +37,7 @@ class Solver(object):
                 loss.backward()
                 self.opt.step()
                 self.opt.clear_grad()
+                # print("net.parameter: ", self.algo.net.parameters())
                 print("epoch/num_epoch: ", epoch_id + 1, "/", num_epoch,
                       "batch/num_batch: ", batch_id + 1, "/", num_batch,
                       "loss: ", loss.numpy()[0], "eq_loss: ",
