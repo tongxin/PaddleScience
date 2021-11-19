@@ -20,7 +20,12 @@ from .loss_base import LossBase
 
 
 class L2(LossBase):
-    def __init__(self, pdes, geo, aux_func=None, bc_weight=None):
+    def __init__(self,
+                 pdes,
+                 geo,
+                 aux_func=None,
+                 bc_weight=None,
+                 run_in_batch=False):
         super(L2, self).__init__(pdes, geo)
 
         self.pdes = pdes
@@ -28,8 +33,8 @@ class L2(LossBase):
         self.aux_func = aux_func
         self.bc_weight = bc_weight
         self.d_records = dict()
-        # TODO(lml): support batch run when batch_jacobian and batch_hessian is ok
-        self.can_batch_run = False
+        self.d_records = dict()
+        self.run_in_batch = run_in_batch
 
     def set_batch_size(self, batch_size):
         self.pdes.set_batch_size(batch_size)
@@ -68,6 +73,65 @@ class L2(LossBase):
                     else:
                         self.d_records[second_order_derivatives[i][j + 1][
                             k + 1]] = d_values[j][k]
+
+    def batch_cal_first_order_rslts(self, net, ins):
+        outs = net.nn_func(ins)
+        for i in range(net.num_outs):
+            self.d_records[first_order_rslts[i]] = outs[:, i]
+
+    def batch_cal_first_order_derivatives(self, net, ins):
+        d_values = jacobian(net.nn_func, ins, create_graph=True, batch=True)
+        d_values = paddle.reshape(
+            d_values,
+            shape=[
+                self.batch_size, net.num_outs, self.batch_size, net.num_ins
+            ])
+        for i in range(net.num_outs):
+            for j in range(net.num_ins):
+                if self.pdes.time_dependent:
+                    self.d_records[first_order_derivatives[i][
+                        j]] = paddle.diag(d_values[:, i, :, j])
+                else:
+                    self.d_records[first_order_derivatives[i][
+                        j + 1]] = paddle.diag(d_values[:, i, :, j])
+
+    def batch_cal_second_order_derivatives(self, net, ins):
+        for i in range(net.num_outs):
+
+            def func(ins):
+                return net.nn_func(ins)[:, i:i + 1]
+
+            d_values = hessian(func, ins, create_graph=True, batch=True)
+            d_values = paddle.reshape(
+                d_values,
+                shape=[
+                    self.batch_size, net.num_ins, self.batch_size, net.num_ins
+                ])
+            for j in range(net.num_ins):
+                for k in range(net.num_ins):
+                    if self.pdes.time_dependent:
+                        self.d_records[second_order_derivatives[i][j][
+                            k]] = paddle.diag(d_values[:, j, :, k])
+                    else:
+                        self.d_records[second_order_derivatives[i][j + 1][
+                            k + 1]] = paddle.diag(d_values[:, j, :, k])
+
+    def batch_eq_loss(self, net, ins):
+        self.batch_cal_first_order_rslts(net, ins)
+        self.batch_cal_first_order_derivatives(net, ins)
+        if self.pdes.need_2nd_derivatives:
+            self.batch_cal_second_order_derivatives(net, ins)
+        eq_loss = 0
+        for idx in range(self.pdes.num_pdes):
+            for item in self.pdes.get_pde(idx):
+                tmp = item.coefficient
+                for de in item.derivative:
+                    tmp = tmp * self.d_records[de]
+                eq_loss += tmp
+        self.d_records.clear()
+        if self.aux_func is not None:
+            eq_loss += paddle.reshape(self.aux_func(ins), shape=[-1])
+        return paddle.norm(eq_loss, p=2)
 
     def eq_loss(self, net, ins):
         self.cal_first_order_rslts(net, ins)
@@ -116,9 +180,8 @@ class L2(LossBase):
         b_datas = self.geo.get_step()
         u = net.nn_func(b_datas)
         eq_loss = 0
-        if self.can_batch_run:
-            ins = paddle.stack(b_datas, axis=0)
-            eq_loss = self.eq_loss(ins)
+        if self.run_in_batch:
+            eq_loss = self.batch_eq_loss(net, b_datas)
         else:
             eq_loss_l = []
             for data in b_datas:
