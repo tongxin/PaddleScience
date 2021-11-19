@@ -33,7 +33,6 @@ class L2(LossBase):
         self.aux_func = aux_func
         self.bc_weight = bc_weight
         self.d_records = dict()
-        self.d_records = dict()
         self.run_in_batch = run_in_batch
 
     def set_batch_size(self, batch_size):
@@ -121,16 +120,16 @@ class L2(LossBase):
         self.batch_cal_first_order_derivatives(net, ins)
         if self.pdes.need_2nd_derivatives:
             self.batch_cal_second_order_derivatives(net, ins)
-        eq_loss = 0
+        # TODO(lml): add support for aux_func
+        eq_loss_l = [0.0 for _ in range(self.pdes.num_pdes)]
         for idx in range(self.pdes.num_pdes):
             for item in self.pdes.get_pde(idx):
                 tmp = item.coefficient
                 for de in item.derivative:
                     tmp = tmp * self.d_records[de]
-                eq_loss += tmp
+                    eq_loss_l[idx] += tmp
         self.d_records.clear()
-        if self.aux_func is not None:
-            eq_loss += paddle.reshape(self.aux_func(ins), shape=[-1])
+        eq_loss = paddle.reshape(paddle.stack(eq_loss_l, axis=0), shape=[-1])
         return paddle.norm(eq_loss, p=2)
 
     def eq_loss(self, net, ins):
@@ -138,17 +137,17 @@ class L2(LossBase):
         self.cal_first_order_derivatives(net, ins)
         if self.pdes.need_2nd_derivatives:
             self.cal_second_order_derivatives(net, ins)
-        eq_loss = 0
+        eq_loss_l = [0.0 for _ in range(self.pdes.num_pdes)]
+        if self.aux_func is not None:
+            eq_loss_l = self.aux_func(ins)
         for idx in range(self.pdes.num_pdes):
             for item in self.pdes.get_pde(idx):
                 tmp = item.coefficient
                 for de in item.derivative:
                     tmp = tmp * self.d_records[de]
-                eq_loss += tmp
+                eq_loss_l[idx] += tmp
         self.d_records.clear()
-        if self.aux_func is not None:
-            eq_loss += self.aux_func(ins)
-        return eq_loss
+        return eq_loss_l
 
     def bc_loss(self, u, batch_id):
         # print("u.shape: ", u.shape)
@@ -185,7 +184,7 @@ class L2(LossBase):
         else:
             eq_loss_l = []
             for data in b_datas:
-                eq_loss_l.append(self.eq_loss(net, data))
+                eq_loss_l += self.eq_loss(net, data)
             eq_loss = paddle.stack(eq_loss_l, axis=0)
             eq_loss = paddle.norm(eq_loss, p=2)
         bc_loss = self.bc_loss(u, batch_id)

@@ -50,7 +50,7 @@ geo = psci.geometry.Rectangular(
 pdes = psci.pde.Laplace2D()
 
 # Discretization
-pdes, geo = psci.discretize(pdes, geo, space_steps=(41, 41))
+pdes, geo = psci.discretize(pdes, geo, space_steps=(6, 6))
 
 # bc value
 golden, bc_value = GenSolution(geo.steps, geo.bc_index)
@@ -68,7 +68,7 @@ net = psci.network.FCNet(
     activation="tanh")
 
 # Loss, TO rename
-loss = psci.loss.L2(pdes=pdes, geo=geo)
+loss = psci.loss.L2(pdes=pdes, geo=geo, run_in_batch=False)
 
 # Algorithm
 algo = psci.algorithm.PINNs(net=net, loss=loss)
@@ -78,7 +78,7 @@ opt = psci.optimizer.Adam(learning_rate=0.001, parameters=net.parameters())
 
 # Solver
 solver = psci.solver.Solver(algo=algo, opt=opt)
-solution = solver.solve(num_epoch=30000, batch_size=None)
+solution = solver.solve(num_epoch=30, batch_size=None)
 
 # Use solution
 rslt = solution(geo).numpy()

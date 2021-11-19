@@ -41,8 +41,10 @@ def GenSolution(txy, bc_index):
 
 # right-hand side
 def Righthand(xy):
-    return 8.0 * 3.1415926 * 3.1415926 * paddle.sin(
-        2.0 * np.pi * xy[0]) * paddle.cos(2.0 * np.pi * xy[1])
+    return [
+        8.0 * 3.1415926 * 3.1415926 * paddle.sin(2.0 * np.pi * xy[0]) *
+        paddle.cos(2.0 * np.pi * xy[1])
+    ]
 
 
 # Geometry
@@ -53,7 +55,7 @@ geo = psci.geometry.Rectangular(
 pdes = psci.pde.Laplace2D()
 
 # Discretization
-pdes, geo = psci.discretize(pdes, geo, space_steps=(41, 41))
+pdes, geo = psci.discretize(pdes, geo, space_steps=(6, 6))
 
 # bc value
 golden, bc_value = GenSolution(geo.steps, geo.bc_index)
@@ -81,7 +83,7 @@ opt = psci.optimizer.Adam(learning_rate=0.001, parameters=net.parameters())
 
 # Solver
 solver = psci.solver.Solver(algo=algo, opt=opt)
-solution = solver.solve(num_epoch=30000, batch_size=None)
+solution = solver.solve(num_epoch=30, batch_size=None)
 
 # Use solution
 rslt = solution(geo).numpy()
