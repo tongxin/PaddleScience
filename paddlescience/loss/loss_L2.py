@@ -14,7 +14,7 @@
 
 import paddle
 import paddle.nn.functional as F
-from paddle.autograd import jacobian, hessian
+from paddle.autograd import jacobian, hessian, batch_jacobian, batch_hessian
 from ..pde import first_order_rslts, first_order_derivatives, second_order_derivatives
 from .loss_base import LossBase
 
@@ -79,20 +79,17 @@ class L2(LossBase):
             self.d_records[first_order_rslts[i]] = outs[:, i]
 
     def batch_cal_first_order_derivatives(self, net, ins):
-        d_values = jacobian(net.nn_func, ins, create_graph=True, batch=True)
+        d_values = batch_jacobian(net.nn_func, ins, create_graph=True)
         d_values = paddle.reshape(
-            d_values,
-            shape=[
-                self.batch_size, net.num_outs, self.batch_size, net.num_ins
-            ])
+            d_values, shape=[net.num_outs, self.batch_size, net.num_ins])
         for i in range(net.num_outs):
             for j in range(net.num_ins):
                 if self.pdes.time_dependent:
-                    self.d_records[first_order_derivatives[i][
-                        j]] = paddle.diag(d_values[:, i, :, j])
+                    self.d_records[first_order_derivatives[i][j]] = d_values[
+                        i, :, j]
                 else:
                     self.d_records[first_order_derivatives[i][
-                        j + 1]] = paddle.diag(d_values[:, i, :, j])
+                        j + 1]] = d_values[i, :, j]
 
     def batch_cal_second_order_derivatives(self, net, ins):
         for i in range(net.num_outs):
@@ -100,20 +97,17 @@ class L2(LossBase):
             def func(ins):
                 return net.nn_func(ins)[:, i:i + 1]
 
-            d_values = hessian(func, ins, create_graph=True, batch=True)
+            d_values = batch_hessian(func, ins, create_graph=True)
             d_values = paddle.reshape(
-                d_values,
-                shape=[
-                    self.batch_size, net.num_ins, self.batch_size, net.num_ins
-                ])
+                d_values, shape=[net.num_ins, self.batch_size, net.num_ins])
             for j in range(net.num_ins):
                 for k in range(net.num_ins):
                     if self.pdes.time_dependent:
                         self.d_records[second_order_derivatives[i][j][
-                            k]] = paddle.diag(d_values[:, j, :, k])
+                            k]] = d_values[j, :, k]
                     else:
                         self.d_records[second_order_derivatives[i][j + 1][
-                            k + 1]] = paddle.diag(d_values[:, j, :, k])
+                            k + 1]] = d_values[j, :, k]
 
     def batch_eq_loss(self, net, ins):
         self.batch_cal_first_order_rslts(net, ins)
