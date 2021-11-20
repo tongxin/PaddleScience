@@ -121,7 +121,7 @@ class L2(LossBase):
                 tmp = item.coefficient
                 for de in item.derivative:
                     tmp = tmp * self.d_records[de]
-                    eq_loss_l[idx] += tmp
+                eq_loss_l[idx] += tmp
         self.d_records.clear()
         eq_loss = paddle.reshape(paddle.stack(eq_loss_l, axis=0), shape=[-1])
         return paddle.norm(eq_loss, p=2)
