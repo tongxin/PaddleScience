@@ -116,6 +116,8 @@ class L2(LossBase):
             self.batch_cal_second_order_derivatives(net, ins)
         # TODO(lml): add support for aux_func
         eq_loss_l = [0.0 for _ in range(self.pdes.num_pdes)]
+        if self.aux_func is not None:
+            eq_loss_l = self.aux_func(ins)
         for idx in range(self.pdes.num_pdes):
             for item in self.pdes.get_pde(idx):
                 tmp = item.coefficient

@@ -55,7 +55,7 @@ geo = psci.geometry.Rectangular(space_origin=(-5, -5), space_extent=(5, 5))
 pdes = psci.pde.NavierStokes2D(nu=0.1, rho=1.0)
 
 # Discretization
-pdes, geo = psci.discretize(pdes, geo, space_steps=(11, 11))
+pdes, geo = psci.discretize(pdes, geo, space_steps=(101, 101))
 
 # bc value
 bc_value = GenBC(geo.steps, geo.bc_index)
@@ -70,11 +70,15 @@ net = psci.network.FCNet(
     dtype="float32",
     activation='tanh')
 # load params from checkpoint
-# net.set_state_dict(paddle.load('./checkpoint/net_params_100'))
+# net.set_state_dict(paddle.load('./checkpoint/net_params_30000'))
 
 # Loss, TO rename
 bc_weight = GenBCWeight(geo.steps, geo.bc_index)
-loss = psci.loss.L2(pdes=pdes, geo=geo, bc_weight=bc_weight)
+# loss = psci.loss.L2(pdes=pdes, geo=geo, bc_weight=bc_weight, run_in_batch=True)
+loss = psci.loss.L2(pdes=pdes,
+                    geo=geo,
+                    bc_weight=bc_weight,
+                    run_in_batch=False)
 
 # Algorithm
 algo = psci.algorithm.PINNs(net=net, loss=loss)
@@ -82,14 +86,18 @@ algo = psci.algorithm.PINNs(net=net, loss=loss)
 # Optimizer
 opt = psci.optimizer.Adam(learning_rate=0.001, parameters=net.parameters())
 # load params from checkpoint
-# opt.set_state_dict(paddle.load('./checkpoint/opt_params_100'))
+# opt.set_state_dict(paddle.load('./checkpoint/opt_params_30000'))
 
 # Solver
 solver = psci.solver.Solver(algo=algo, opt=opt)
-solution = solver.solve(num_epoch=30000, batch_size=None, checkpoint_freq=100)
+solution = solver.solve(num_epoch=30000, batch_size=None, checkpoint_freq=1000)
 
 # Use solution
 rslt = solution(geo).numpy()
-psci.visu.Rectangular2D(geo, rslt[:, 0], filename="rslt_u")
-psci.visu.Rectangular2D(geo, rslt[:, 1], filename="rslt_v")
+u = rslt[:, 0]
+v = rslt[:, 1]
+u_and_v = np.sqrt(u * u + v * v)
+psci.visu.Rectangular2D(geo, u, filename="rslt_u")
+psci.visu.Rectangular2D(geo, v, filename="rslt_v")
+psci.visu.Rectangular2D(geo, u_and_v, filename="u_and_v")
 np.save('./rslt_ldc_2d.npy', rslt)
