@@ -12,26 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import wraps
-
 import paddle
 import paddle.nn.functional as F
-from paddle.autograd import jacobian, hessian
+from paddle.autograd import jacobian, hessian, batch_jacobian, batch_hessian
 from ..pde import first_order_rslts, first_order_derivatives, second_order_derivatives
 from .loss_base import LossBase
 
 
 class L2(LossBase):
-    def __init__(self, pdes, geo, aux_func=None, bc_weight=None):
+    def __init__(self,
+                 pdes,
+                 geo,
+                 aux_func=None,
+                 eq_weight=None,
+                 bc_weight=None,
+                 synthesis_method="add",
+                 run_in_batch=False):
         super(L2, self).__init__(pdes, geo)
 
         self.pdes = pdes
         self.geo = geo
         self.aux_func = aux_func
+        self.eq_weight = eq_weight
         self.bc_weight = bc_weight
+        self.synthesis_method = synthesis_method
         self.d_records = dict()
-        # TODO(lml): support batch run when batch_jacobian and batch_hessian is ok
-        self.can_batch_run = False
+        self.run_in_batch = run_in_batch
 
     def set_batch_size(self, batch_size):
         self.pdes.set_batch_size(batch_size)
@@ -71,22 +77,77 @@ class L2(LossBase):
                         self.d_records[second_order_derivatives[i][j + 1][
                             k + 1]] = d_values[j][k]
 
-    def eq_loss(self, net, ins):
-        self.cal_first_order_rslts(net, ins)
-        self.cal_first_order_derivatives(net, ins)
+    def batch_cal_first_order_rslts(self, net, ins):
+        outs = net.nn_func(ins)
+        for i in range(net.num_outs):
+            self.d_records[first_order_rslts[i]] = outs[:, i]
+
+    def batch_cal_first_order_derivatives(self, net, ins):
+        d_values = batch_jacobian(net.nn_func, ins, create_graph=True)
+        d_values = paddle.reshape(
+            d_values, shape=[net.num_outs, self.batch_size, net.num_ins])
+        for i in range(net.num_outs):
+            for j in range(net.num_ins):
+                if self.pdes.time_dependent:
+                    self.d_records[first_order_derivatives[i][j]] = d_values[
+                        i, :, j]
+                else:
+                    self.d_records[first_order_derivatives[i][
+                        j + 1]] = d_values[i, :, j]
+
+    def batch_cal_second_order_derivatives(self, net, ins):
+        for i in range(net.num_outs):
+
+            def func(ins):
+                return net.nn_func(ins)[:, i:i + 1]
+
+            d_values = batch_hessian(func, ins, create_graph=True)
+            d_values = paddle.reshape(
+                d_values, shape=[net.num_ins, self.batch_size, net.num_ins])
+            for j in range(net.num_ins):
+                for k in range(net.num_ins):
+                    if self.pdes.time_dependent:
+                        self.d_records[second_order_derivatives[i][j][
+                            k]] = d_values[j, :, k]
+                    else:
+                        self.d_records[second_order_derivatives[i][j + 1][
+                            k + 1]] = d_values[j, :, k]
+
+    def batch_eq_loss(self, net, ins):
+        self.batch_cal_first_order_rslts(net, ins)
+        self.batch_cal_first_order_derivatives(net, ins)
         if self.pdes.need_2nd_derivatives:
-            self.cal_second_order_derivatives(net, ins)
-        eq_loss = 0
+            self.batch_cal_second_order_derivatives(net, ins)
+        # TODO(lml): add support for aux_func
+        eq_loss_l = [0.0 for _ in range(self.pdes.num_pdes)]
+        if self.aux_func is not None:
+            eq_loss_l = self.aux_func(ins)
         for idx in range(self.pdes.num_pdes):
             for item in self.pdes.get_pde(idx):
                 tmp = item.coefficient
                 for de in item.derivative:
                     tmp = tmp * self.d_records[de]
-                eq_loss += tmp
+                eq_loss_l[idx] += tmp
         self.d_records.clear()
+        eq_loss = paddle.reshape(paddle.stack(eq_loss_l, axis=0), shape=[-1])
+        return paddle.norm(eq_loss, p=2)
+
+    def eq_loss(self, net, ins):
+        self.cal_first_order_rslts(net, ins)
+        self.cal_first_order_derivatives(net, ins)
+        if self.pdes.need_2nd_derivatives:
+            self.cal_second_order_derivatives(net, ins)
+        eq_loss_l = [0.0 for _ in range(self.pdes.num_pdes)]
         if self.aux_func is not None:
-            eq_loss += self.aux_func(ins)
-        return eq_loss
+            eq_loss_l = self.aux_func(ins)
+        for idx in range(self.pdes.num_pdes):
+            for item in self.pdes.get_pde(idx):
+                tmp = item.coefficient
+                for de in item.derivative:
+                    tmp = tmp * self.d_records[de]
+                eq_loss_l[idx] += tmp
+        self.d_records.clear()
+        return eq_loss_l
 
     def bc_loss(self, u, batch_id):
         # print("u.shape: ", u.shape)
@@ -98,11 +159,10 @@ class L2(LossBase):
         # print("bc_u.shape: ", bc_u.shape)
         # print("bc_value.shape: ", bc_value.shape)
         bc_diff = bc_u - bc_value
-        if self.bc_weight is None:
-            return paddle.norm(bc_diff, p=2)
-        else:
+        if self.bc_weight is not None:
             bc_weight = paddle.to_tensor(self.bc_weight, dtype="float32")
-            return paddle.sum(bc_diff * bc_diff * bc_weight)
+            bc_diff = bc_diff * paddle.sqrt(bc_weight)
+        return paddle.norm(bc_diff, p=2)
 
     def ic_loss(self, u, batch_id):
         if self.pdes.time_dependent:
@@ -112,25 +172,29 @@ class L2(LossBase):
             ic_diff = ic_u - ic_value
             return paddle.norm(ic_diff, p=2)
         else:
-            return 0
+            return paddle.to_tensor([0], dtype="float32")
 
     def batch_run(self, net, batch_id):
         b_datas = self.geo.get_step()
         u = net.nn_func(b_datas)
-        # for i, weight in enumerate(net.weights):
-        #     print(f'layer {i} weight {net.weights[i]}')
         eq_loss = 0
-        if self.can_batch_run:
-            ins = paddle.stack(b_datas, axis=0)
-            eq_loss = self.eq_loss(ins)
+        if self.run_in_batch:
+            eq_loss = self.batch_eq_loss(net, b_datas)
         else:
             eq_loss_l = []
             for data in b_datas:
-                eq_loss_l.append(self.eq_loss(net, data))
+                eq_loss_l += self.eq_loss(net, data)
             eq_loss = paddle.stack(eq_loss_l, axis=0)
             eq_loss = paddle.norm(eq_loss, p=2)
+        eq_loss = eq_loss if self.eq_weight is None else eq_loss * self.eq_weight
         bc_loss = self.bc_loss(u, batch_id)
         ic_loss = self.ic_loss(u, batch_id)
-        return eq_loss, bc_loss, ic_loss
-
-        
+        if self.synthesis_method == 'add':
+            loss = eq_loss + bc_loss + ic_loss
+            return loss, [eq_loss, bc_loss, ic_loss]
+        elif self.synthesis_method == 'norm':
+            losses = [eq_loss, bc_loss, ic_loss]
+            loss = paddle.norm(paddle.stack(losses, axis=0), p=2)
+            return loss, losses
+        else:
+            assert 0, "Unsupported synthesis_method"
