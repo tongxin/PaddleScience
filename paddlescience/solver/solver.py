@@ -32,16 +32,15 @@ class Solver(object):
 
         for epoch_id in range(num_epoch):
             for batch_id in range(num_batch):
-                eq_loss, bc_loss, ic_loss = self.algo.batch_run(batch_id)
-                loss = eq_loss + bc_loss + ic_loss
+                loss, losses = self.algo.batch_run(batch_id)
                 loss.backward()
                 self.opt.step()
                 self.opt.clear_grad()
                 print("epoch/num_epoch: ", epoch_id + 1, "/", num_epoch,
                       "batch/num_batch: ", batch_id + 1, "/", num_batch,
                       "loss: ",
-                      loss.numpy()[0], "eq_loss: ",
-                      eq_loss.numpy()[0], "bc_loss: ", bc_loss.numpy()[0])
+                      loss.numpy()[0], "eq_loss: ", losses[0].numpy()[0],
+                      "bc_loss: ", losses[1].numpy()[0])
             if (epoch_id + 1) % checkpoint_freq == 0:
                 paddle.save(self.algo.net.state_dict(),
                             './checkpoint/net_params_' + str(epoch_id + 1))

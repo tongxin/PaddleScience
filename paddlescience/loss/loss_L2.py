@@ -24,14 +24,18 @@ class L2(LossBase):
                  pdes,
                  geo,
                  aux_func=None,
+                 eq_weight=None,
                  bc_weight=None,
+                 synthesis_method="add",
                  run_in_batch=False):
         super(L2, self).__init__(pdes, geo)
 
         self.pdes = pdes
         self.geo = geo
         self.aux_func = aux_func
+        self.eq_weight = eq_weight
         self.bc_weight = bc_weight
+        self.synthesis_method = synthesis_method
         self.d_records = dict()
         self.run_in_batch = run_in_batch
 
@@ -155,11 +159,10 @@ class L2(LossBase):
         # print("bc_u.shape: ", bc_u.shape)
         # print("bc_value.shape: ", bc_value.shape)
         bc_diff = bc_u - bc_value
-        if self.bc_weight is None:
-            return paddle.norm(bc_diff, p=2)
-        else:
+        if self.bc_weight is not None:
             bc_weight = paddle.to_tensor(self.bc_weight, dtype="float32")
-            return paddle.sum(bc_diff * bc_diff * bc_weight)
+            bc_diff = bc_diff * paddle.sqrt(bc_weight)
+        return paddle.norm(bc_diff, p=2)
 
     def ic_loss(self, u, batch_id):
         if self.pdes.time_dependent:
@@ -169,7 +172,7 @@ class L2(LossBase):
             ic_diff = ic_u - ic_value
             return paddle.norm(ic_diff, p=2)
         else:
-            return 0
+            return paddle.to_tensor([0], dtype="float32")
 
     def batch_run(self, net, batch_id):
         b_datas = self.geo.get_step()
@@ -183,6 +186,15 @@ class L2(LossBase):
                 eq_loss_l += self.eq_loss(net, data)
             eq_loss = paddle.stack(eq_loss_l, axis=0)
             eq_loss = paddle.norm(eq_loss, p=2)
+        eq_loss = eq_loss if self.eq_weight is None else eq_loss * self.eq_weight
         bc_loss = self.bc_loss(u, batch_id)
         ic_loss = self.ic_loss(u, batch_id)
-        return eq_loss, bc_loss, ic_loss
+        if self.synthesis_method == 'add':
+            loss = eq_loss + bc_loss + ic_loss
+            return loss, [eq_loss, bc_loss, ic_loss]
+        elif self.synthesis_method == 'norm':
+            losses = [eq_loss, bc_loss, ic_loss]
+            loss = paddle.norm(paddle.stack(losses, axis=0), p=2)
+            return loss, losses
+        else:
+            assert 0, "Unsupported synthesis_method"

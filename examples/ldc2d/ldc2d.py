@@ -25,8 +25,8 @@ def GenBC(xy, bc_index):
     bc_value = np.zeros((len(bc_index), 2)).astype(np.float32)
     for i in range(len(bc_index)):
         id = bc_index[i]
-        if abs(xy[id][1] - 5) < 1e-4:
-            bc_value[i][0] = 0.1
+        if abs(xy[id][1] - 0.05) < 1e-4:
+            bc_value[i][0] = 1.0
             bc_value[i][1] = 0.0
         else:
             bc_value[i][0] = 0.0
@@ -39,8 +39,8 @@ def GenBCWeight(xy, bc_index):
     bc_weight = np.zeros((len(bc_index), 2)).astype(np.float32)
     for i in range(len(bc_index)):
         id = bc_index[i]
-        if abs(xy[id][1] - 5) < 1e-4:
-            bc_weight[i][0] = 1.0 - 0.2 * abs(xy[id][0])
+        if abs(xy[id][1] - 0.05) < 1e-4:
+            bc_weight[i][0] = 1.0 - 20 * abs(xy[id][0])
             bc_weight[i][1] = 1.0
         else:
             bc_weight[i][0] = 1.0
@@ -49,10 +49,11 @@ def GenBCWeight(xy, bc_index):
 
 
 # Geometry
-geo = psci.geometry.Rectangular(space_origin=(-5, -5), space_extent=(5, 5))
+geo = psci.geometry.Rectangular(
+    space_origin=(-0.05, -0.05), space_extent=(0.05, 0.05))
 
 # PDE Laplace
-pdes = psci.pde.NavierStokes2D(nu=0.1, rho=1.0)
+pdes = psci.pde.NavierStokes2D(nu=0.01, rho=1.0)
 
 # Discretization
 pdes, geo = psci.discretize(pdes, geo, space_steps=(101, 101))
@@ -74,10 +75,12 @@ net = psci.network.FCNet(
 
 # Loss, TO rename
 bc_weight = GenBCWeight(geo.steps, geo.bc_index)
-# loss = psci.loss.L2(pdes=pdes, geo=geo, bc_weight=bc_weight, run_in_batch=True)
+# loss = psci.loss.L2(pdes=pdes, geo=geo, eq_weight=0.01, bc_weight=bc_weight, synthesis_method='norm', run_in_batch=True)
 loss = psci.loss.L2(pdes=pdes,
                     geo=geo,
+                    eq_weight=0.01,
                     bc_weight=bc_weight,
+                    synthesis_method='norm',
                     run_in_batch=False)
 
 # Algorithm
