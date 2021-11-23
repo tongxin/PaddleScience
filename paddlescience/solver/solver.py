@@ -27,7 +27,50 @@ class Solver(object):
             return self.solve_Adam(num_epoch, batch_size, checkpoint_freq)
         elif self.opt is paddle.optimizer.functional.bfgs_iterates:
             return self.solve_bfgs(num_epoch, batch_size) 
-            
+    
+    def solve_bfgs(self, num_epoch=1, batch_size=None, checkpoint_freq=1000):
+        batch_size = self.algo.loss.geo.get_nsteps(
+        ) if batch_size is None else batch_size
+        self.algo.loss.set_batch_size(batch_size)
+        self.algo.loss.pdes.to_tensor()
+        self.algo.loss.geo.to_tensor()
+        num_batch = self.algo.loss.num_batch
+
+        net = self.algo.net
+        batch_id = 0
+        loss = None
+        losses = []
+
+        def _f(x):
+            nonlocal net, loss, batch_id, loss, losses
+            batch_id = batch_id % num_batch
+
+            net.reconstruct(x)
+            loss, losses = self.algo.batch_run(net, batch_id)
+            batch_id += 1
+            print("[LS] loss: ",
+                      loss.numpy()[0], "eq_loss: ", losses[0].numpy()[0],
+                      "bc_loss: ", losses[1].numpy()[0])
+            return loss
+        
+        x0 = net.flatten_params()
+        for epoch, opt_state in enumerate(self.opt(_f, x0, iters=num_epoch, ls_iters=100)):
+            print("epoch/max_epoch: ", epoch + 1, "/", num_epoch,
+                  "loss: ", loss.numpy()[0], "eq_loss: ",
+                  losses[0].numpy()[0], "bc_loss: ", losses[1].numpy()[0])
+            if (epoch + 1) % checkpoint_freq == 0:
+                paddle.save(self.algo.net.state_dict(),
+                        './checkpoint/net_params_' + str(epoch_id + 1))
+                paddle.save(self.opt.state_dict(),
+                        './checkpoint/opt_params_' + str(epoch_id + 1))
+                np.save('./checkpoint/rslt_' + str(epoch_id + 1) + '.npy',
+                        self.algo.net.nn_func(self.algo.loss.geo.steps))
+
+        def solution_fn(geo):
+            return self.algo.net.nn_func(geo.steps)
+
+        return solution_fn
+
     def solve_Adam(self, num_epoch=1, batch_size=None, checkpoint_freq=1000):
         batch_size = self.algo.loss.geo.get_nsteps(
         ) if batch_size is None else batch_size

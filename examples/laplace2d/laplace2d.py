@@ -70,7 +70,7 @@ net = psci.network.FCNet(
 
 # Loss, TO rename
 # loss = psci.loss.L2(pdes=pdes, geo=geo, run_in_batch=True)
-loss = psci.loss.L2(pdes=pdes, geo=geo, run_in_batch=False)
+loss = psci.loss.L2(pdes=pdes, geo=geo, run_in_batch=True)
 
 # Algorithm
 algo = psci.algorithm.PINNs(net=net, loss=loss)
@@ -81,7 +81,7 @@ opt = psci.optimizer.Adam(learning_rate=0.001, parameters=net.parameters())
 
 # Solver
 solver = psci.solver.Solver(algo=algo, opt=opt)
-solution = solver.solve(num_epoch=30000, batch_size=None)
+solution = solver.solve(num_epoch=3000, batch_size=None)
 
 # Use solution
 rslt = solution(geo).numpy()

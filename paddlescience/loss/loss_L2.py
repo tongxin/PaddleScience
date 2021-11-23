@@ -14,7 +14,8 @@
 
 import paddle
 import paddle.nn.functional as F
-from paddle.autograd import jacobian, hessian, batch_jacobian, batch_hessian
+from paddle.autograd import jacobian, hessian
+from ..autograd import batch_jacobian, batch_hessian
 from ..pde import first_order_rslts, first_order_derivatives, second_order_derivatives
 from .loss_base import LossBase
 
