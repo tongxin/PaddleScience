@@ -22,4 +22,4 @@ def Adam(**kargs):
     return paddle.optimizer.Adam(**kargs)
 
 def BFGS(**kargs):
-    return paddle.optimizer.functional.bfgs_iterates
+    return paddle.optimizer.functional.bfgs_optimize
